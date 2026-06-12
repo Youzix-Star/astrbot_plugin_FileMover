@@ -16,7 +16,7 @@ from .src.utils import (
 class FileMoverPlugin(Star):
     """
     群文件自动归档插件
-    
+
     根据文件名自动将群文件移动到对应文件夹。
     支持自定义文件夹规则，提取文件名中的软件名进行匹配。
     """
@@ -62,6 +62,7 @@ class FileMoverPlugin(Star):
         if self._is_supported_bot_client(candidate):
             self.bot = candidate
             await self._detect_llbot()
+            logger.info("[群文件归档] 已切换到当前事件来源的 OneBot 客户端")
 
     async def _detect_llbot(self):
         """检测是否是 LLOneBot 后端"""
@@ -156,10 +157,8 @@ class FileMoverPlugin(Star):
                     folder_name=folder_name,
                 )
 
-            # 等待创建完成
             await asyncio.sleep(1)
 
-            # 获取新创建的文件夹 ID
             folders = await self._get_folders(group_id)
             for folder in folders:
                 if folder.get("folder_name") == folder_name:
@@ -196,7 +195,6 @@ class FileMoverPlugin(Star):
                     target_parent_directory=target_folder_id,
                 )
 
-            # 检查结果
             if result is None:
                 return True
             if isinstance(result, dict):
@@ -216,132 +214,118 @@ class FileMoverPlugin(Star):
     @filter.command("fm", alias={"归档", "文件归档", "自动归档"})
     async def on_file_move_command(self, event: AstrMessageEvent):
         """扫描群文件并根据规则自动归档到对应文件夹"""
-        await self._ensure_bot_bound(event)
+        try:
+            await self._ensure_bot_bound(event)
 
-        group_id_str = event.get_group_id()
-        if not group_id_str:
-            yield event.plain_result("❌ 此指令只能在群聊中使用。")
-            return
+            group_id_str = event.get_group_id()
+            if not group_id_str:
+                yield event.plain_result("❌ 此指令只能在群聊中使用。")
+                return
 
-        group_id = int(group_id_str)
+            group_id = int(group_id_str)
 
-        if not self.bot:
-            yield event.plain_result("❌ 未获取到 Bot 实例，请稍后重试。")
-            return
+            if not self.bot:
+                yield event.plain_result("❌ 未获取到 Bot 实例，请稍后重试。")
+                return
 
-        if not self.folder_rules:
+            if not self.folder_rules:
+                yield event.plain_result(
+                    "❌ 未配置任何文件夹规则。\n\n请在插件配置中添加文件夹名称，例如：\n"
+                    "• 模了个块（QQ TIM模块）\n• QAuxv（QQ TIM模块）\n• TCQT（QQ模块）"
+                )
+                return
+
             yield event.plain_result(
-                "❌ 未配置任何文件夹规则。\n\n请在插件配置中添加文件夹名称，例如：\n"
-                "• 模了个块（QQ TIM模块）\n• QAuxv（QQ TIM模块）\n• TCQT（QQ模块）"
+                "📁 开始扫描群文件并归档...\n这可能需要一些时间，请耐心等待。"
             )
-            return
 
-        yield event.plain_result(
-            "📁 开始扫描群文件并归档...\n这可能需要一些时间，请耐心等待。"
-        )
+            logger.info(f"[群文件归档] 开始获取群 {group_id} 的文件列表")
+            all_files = await self._get_all_files(group_id)
+            existing_folders = await self._get_folders(group_id)
+            existing_folder_ids = {
+                f["folder_name"]: f["folder_id"] for f in existing_folders
+            }
 
-        # 1. 获取所有文件和文件夹
-        all_files = await self._get_all_files(group_id)
-        existing_folders = await self._get_folders(group_id)
-        existing_folder_ids = {
-            f["folder_name"]: f["folder_id"] for f in existing_folders
-        }
-
-        logger.info(
-            f"[群文件归档] 获取到 {len(all_files)} 个文件，{len(existing_folders)} 个文件夹"
-        )
-
-        # 2. 处理每个文件
-        results = []
-        folder_cache = {}  # 缓存已创建的文件夹 ID
-
-        for file_info in all_files:
-            file_name = file_info.get("file_name", "")
-            file_id = file_info.get("file_id", "")
-            current_folder_id = file_info.get("current_folder_id", "/")
-
-            if not file_name or not file_id:
-                continue
-
-            # 提取软件名
-            software_name = extract_software_name(file_name)
-            if not software_name:
-                logger.debug(
-                    f"[群文件归档] 跳过文件 '{file_name}'：无法提取软件名"
-                )
-                continue
-
-            # 查找匹配的文件夹
-            target_folder_name = find_matching_folder(
-                software_name, self.folder_rules
+            logger.info(
+                f"[群文件归档] 获取到 {len(all_files)} 个文件，{len(existing_folders)} 个文件夹"
             )
-            if not target_folder_name:
-                logger.debug(
-                    f"[群文件归档] 跳过文件 '{file_name}'：未匹配到文件夹 (软件名: {software_name})"
-                )
-                continue
 
-            # 检查是否已经在目标文件夹中
-            current_folder_path = file_info.get("current_folder_path", "")
-            if current_folder_path == target_folder_name:
-                logger.debug(
-                    f"[群文件归档] 跳过文件 '{file_name}'：已在目标文件夹中"
-                )
-                continue
+            if not all_files:
+                yield event.plain_result("📭 群内没有文件，无需归档。")
+                return
 
-            # 获取或创建目标文件夹
-            target_folder_id = None
+            results = []
+            folder_cache = {}
 
-            # 先检查缓存
-            if target_folder_name in folder_cache:
-                target_folder_id = folder_cache[target_folder_name]
-            # 再检查已存在的文件夹
-            elif target_folder_name in existing_folder_ids:
-                target_folder_id = existing_folder_ids[target_folder_name]
-                folder_cache[target_folder_name] = target_folder_id
-            else:
-                # 创建新文件夹
-                logger.info(f"[群文件归档] 创建文件夹: {target_folder_name}")
-                target_folder_id = await self._create_folder(
-                    group_id, target_folder_name
+            for file_info in all_files:
+                file_name = file_info.get("file_name", "")
+                file_id = file_info.get("file_id", "")
+                current_folder_id = file_info.get("current_folder_id", "/")
+
+                if not file_name or not file_id:
+                    continue
+
+                software_name = extract_software_name(file_name)
+                if not software_name:
+                    continue
+
+                target_folder_name = find_matching_folder(
+                    software_name, self.folder_rules
                 )
-                if target_folder_id:
+                if not target_folder_name:
+                    continue
+
+                current_folder_path = file_info.get("current_folder_path", "")
+                if current_folder_path == target_folder_name:
+                    continue
+
+                target_folder_id = None
+
+                if target_folder_name in folder_cache:
+                    target_folder_id = folder_cache[target_folder_name]
+                elif target_folder_name in existing_folder_ids:
+                    target_folder_id = existing_folder_ids[target_folder_name]
                     folder_cache[target_folder_name] = target_folder_id
-                    existing_folder_ids[target_folder_name] = target_folder_id
+                else:
+                    logger.info(f"[群文件归档] 创建文件夹: {target_folder_name}")
+                    target_folder_id = await self._create_folder(
+                        group_id, target_folder_name
+                    )
+                    if target_folder_id:
+                        folder_cache[target_folder_name] = target_folder_id
+                        existing_folder_ids[target_folder_name] = target_folder_id
 
-            if not target_folder_id:
-                results.append(
-                    {
+                if not target_folder_id:
+                    results.append({
                         "file_name": file_name,
                         "success": False,
                         "error": "无法创建目标文件夹",
-                    }
+                    })
+                    continue
+
+                logger.info(
+                    f"[群文件归档] 移动文件 '{file_name}' → '{target_folder_name}'"
                 )
-                continue
+                success = await self._move_file(
+                    group_id, file_id, current_folder_id, target_folder_id
+                )
 
-            # 移动文件
-            logger.info(
-                f"[群文件归档] 移动文件 '{file_name}' → '{target_folder_name}'"
-            )
-            success = await self._move_file(
-                group_id, file_id, current_folder_id, target_folder_id
-            )
-
-            results.append(
-                {
+                results.append({
                     "file_name": file_name,
                     "folder": target_folder_name,
                     "success": success,
                     "error": "移动失败" if not success else None,
-                }
-            )
+                })
 
-            # 避免请求过快
-            await asyncio.sleep(0.5)
+                await asyncio.sleep(0.5)
 
-        # 3. 发送报告
-        report = format_move_result(results)
-        yield event.plain_result(report)
+            report = format_move_result(results)
+            yield event.plain_result(report)
+            logger.info(f"[群文件归档] 归档完成，处理了 {len(results)} 个文件")
+
+        except Exception as e:
+            logger.error(f"[群文件归档] 执行归档指令时发生错误: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 归档过程中发生错误: {str(e)}\n请检查后台日志。")
 
     # ==================== 指令：查看规则 ====================
 
@@ -349,25 +333,29 @@ class FileMoverPlugin(Star):
     @filter.command("fmrules", alias={"归档规则", "查看规则"})
     async def on_show_rules_command(self, event: AstrMessageEvent):
         """显示当前配置的归档规则"""
-        if not self.folder_rules:
-            yield event.plain_result(
-                "📋 当前未配置任何归档规则。\n\n"
-                "请在插件配置中添加文件夹名称，例如：\n"
-                "• 模了个块（QQ TIM模块）\n"
-                "• QAuxv（QQ TIM模块）\n"
-                "• TCQT（QQ模块）"
-            )
-            return
+        try:
+            if not self.folder_rules:
+                yield event.plain_result(
+                    "📋 当前未配置任何归档规则。\n\n"
+                    "请在插件配置中添加文件夹名称，例如：\n"
+                    "• 模了个块（QQ TIM模块）\n"
+                    "• QAuxv（QQ TIM模块）\n"
+                    "• TCQT（QQ模块）"
+                )
+                return
 
-        lines = ["📋 当前归档规则：\n"]
-        for folder_name in self.folder_rules:
-            keyword = extract_folder_keyword(folder_name)
-            lines.append(f"  • {keyword} → {folder_name}")
+            lines = ["📋 当前归档规则：\n"]
+            for folder_name in self.folder_rules:
+                keyword = extract_folder_keyword(folder_name)
+                lines.append(f"  • {keyword} → {folder_name}")
 
-        lines.append(f"\n共 {len(self.folder_rules)} 条规则")
-        lines.append("\n使用 /归档 执行文件归档")
+            lines.append(f"\n共 {len(self.folder_rules)} 条规则")
+            lines.append("\n使用 /归档 执行文件归档")
 
-        yield event.plain_result("\n".join(lines))
+            yield event.plain_result("\n".join(lines))
+        except Exception as e:
+            logger.error(f"[群文件归档] 显示规则时发生错误: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 获取规则失败: {str(e)}")
 
     # ==================== 指令：测试提取 ====================
 
@@ -375,38 +363,42 @@ class FileMoverPlugin(Star):
     @filter.command("fmtest", alias={"测试归档"})
     async def on_test_command(self, event: AstrMessageEvent):
         """测试文件名提取效果，不会实际移动文件"""
-        command_parts = event.message_str.split()
+        try:
+            command_parts = event.message_str.split()
 
-        if len(command_parts) < 2:
-            yield event.plain_result(
-                "❓ 用法: /测试归档 <文件名>\n\n"
-                "示例: /测试归档 QAuxv-v1.6.0.apk"
-            )
-            return
+            if len(command_parts) < 2:
+                yield event.plain_result(
+                    "❓ 用法: /测试归档 <文件名>\n\n"
+                    "示例: /测试归档 QAuxv-v1.6.0.apk"
+                )
+                return
 
-        file_name = command_parts[1]
-        software_name = extract_software_name(file_name)
-        target_folder = (
-            find_matching_folder(software_name, self.folder_rules)
-            if software_name
-            else None
-        )
-
-        lines = [
-            f"🧪 测试结果：\n",
-            f"  文件名: {file_name}",
-            f"  提取的软件名: {software_name or '(无法提取)'}",
-            f"  匹配的文件夹: {target_folder or '(未匹配)'}",
-        ]
-
-        if not software_name:
-            lines.append("\n💡 提示: 文件名需要包含 _ 或 - 分隔符")
-        elif not target_folder:
-            lines.append(
-                f"\n💡 提示: 需要在配置中添加 '{software_name}（xxx）' 格式的文件夹"
+            file_name = command_parts[1]
+            software_name = extract_software_name(file_name)
+            target_folder = (
+                find_matching_folder(software_name, self.folder_rules)
+                if software_name
+                else None
             )
 
-        yield event.plain_result("\n".join(lines))
+            lines = [
+                f"🧪 测试结果：\n",
+                f"  文件名: {file_name}",
+                f"  提取的软件名: {software_name or '(无法提取)'}",
+                f"  匹配的文件夹: {target_folder or '(未匹配)'}",
+            ]
+
+            if not software_name:
+                lines.append("\n💡 提示: 文件名需要包含 _ 或 - 分隔符")
+            elif not target_folder:
+                lines.append(
+                    f"\n💡 提示: 需要在配置中添加 '{software_name}（xxx）' 格式的文件夹"
+                )
+
+            yield event.plain_result("\n".join(lines))
+        except Exception as e:
+            logger.error(f"[群文件归档] 测试提取时发生错误: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 测试失败: {str(e)}")
 
     async def terminate(self):
         """插件卸载"""
