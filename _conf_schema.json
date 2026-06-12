@@ -1,0 +1,12 @@
+{
+    "folder_rules": {
+        "description": "文件夹规则列表",
+        "hint": "配置文件夹名称，插件会自动提取括号前的内容作为匹配关键词。例如：'模了个块（QQ TIM模块）' 会匹配文件名中包含 '模了个块' 的文件。",
+        "type": "list",
+        "default": [
+            "模了个块（QQ TIM模块）",
+            "QAuxv（QQ TIM模块）",
+            "TCQT（QQ模块）"
+        ]
+    }
+}

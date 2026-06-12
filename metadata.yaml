@@ -1,0 +1,9 @@
+name: astrbot_plugin_FileMover
+display_name: 群文件自动归档
+desc: 根据文件名自动将群文件移动到对应文件夹，支持自定义规则
+version: v1.0.0
+author: Youzix_Star
+repo: https://github.com/Youzix-Star/astrbot_plugin_FileMover
+support_platforms:
+  - aiocqhttp
+astrbot_version: ">=4.10.4"
