@@ -4,9 +4,15 @@
         "hint": "配置文件夹名称，插件会自动提取括号前的内容作为匹配关键词。例如：'模了个块（QQ TIM模块）' 会匹配文件名中包含 '模了个块' 的文件。",
         "type": "list",
         "default": [
-            "模了个块（QQ TIM模块）",
+            "GalQQ（QQ模块）",
+            "I'm Pad（多应用模块）",
+            "ONO（QQ模块）",
             "QAuxv（QQ TIM模块）",
-            "TCQT（QQ模块）"
+            "QFun（QQ模块）",
+            "Serendipity（QQ模块）",
+            "TCQT（QQ模块）",
+            "XAutoDaily（QQ模块）",
+            "模了个块（QQ TIM模块）"
         ]
     }
 }
