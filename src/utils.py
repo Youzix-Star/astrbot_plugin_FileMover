@@ -1,5 +1,5 @@
 import re
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 
 def extract_software_name(file_name: str) -> Optional[str]:
@@ -31,54 +31,66 @@ def extract_software_name(file_name: str) -> Optional[str]:
     return None
 
 
-def extract_folder_keyword(folder_name: str) -> str:
+def normalize_rule(rule: Any) -> Optional[Dict[str, str]]:
     """
-    从文件夹名中提取关键词（第一个 （ 或 ( 之前的部分）
+    统一规则格式，支持两种配置方式：
+    1. 字符串格式: "文件夹名（描述）" - 自动提取括号前内容作为关键词
+    2. 字典格式: {"keyword": "关键词", "folder": "文件夹名"} - 显式指定
 
     示例：
-        >>> extract_folder_keyword("模了个块（QQ TIM模块）")
-        '模了个块'
-        >>> extract_folder_keyword("QAuxv（QQ TIM模块）")
-        'QAuxv'
-        >>> extract_folder_keyword("TCQT（QQ模块）")
-        'TCQT'
-        >>> extract_folder_keyword("其他文件")
-        '其他文件'
+        >>> normalize_rule("模了个块（QQ TIM模块）")
+        {'keyword': '模了个块', 'folder': '模了个块（QQ TIM模块）'}
+        >>> normalize_rule({"keyword": "QAuxv", "folder": "QAuxiliary（QQ TIM模块）"})
+        {'keyword': 'QAuxv', 'folder': 'QAuxiliary（QQ TIM模块）'}
     """
-    # 匹配中文括号 （ 或 英文括号 (
-    match = re.match(r'^([^（(]+)', folder_name)
-    if match:
-        return match.group(1).strip()
-    return folder_name.strip()
+    if isinstance(rule, str):
+        # 字符串格式：自动提取括号前内容作为关键词
+        match = re.match(r'^([^（(]+)', rule)
+        keyword = match.group(1).strip() if match else rule.strip()
+        return {"keyword": keyword, "folder": rule.strip()}
+
+    if isinstance(rule, dict):
+        keyword = rule.get("keyword", "").strip()
+        folder = rule.get("folder", "").strip()
+        if keyword and folder:
+            return {"keyword": keyword, "folder": folder}
+
+    return None
 
 
-def find_matching_folder(software_name: str, folder_rules: List[str]) -> Optional[str]:
+def find_matching_folder(software_name: str, folder_rules: List[Any]) -> Optional[str]:
     """
     根据软件名查找匹配的文件夹
 
     Args:
         software_name: 从文件名中提取的软件名
-        folder_rules: 文件夹名称列表
+        folder_rules: 规则列表（支持字符串或字典格式）
 
     Returns:
-        匹配的文件夹完整名称，未匹配返回 None
+        匹配的文件夹名称，未匹配返回 None
 
     示例：
-        >>> rules = ["模了个块（QQ TIM模块）", "QAuxv（QQ TIM模块）"]
-        >>> find_matching_folder("模了个块", rules)
-        '模了个块（QQ TIM模块）'
-        >>> find_matching_folder("unknown", rules)
-        None
+        >>> rules = [
+        ...     {"keyword": "QAuxv", "folder": "QAuxiliary（QQ TIM模块）"},
+        ...     "TCQT（QQ模块）"
+        ... ]
+        >>> find_matching_folder("QAuxv", rules)
+        'QAuxiliary（QQ TIM模块）'
+        >>> find_matching_folder("TCQT", rules)
+        'TCQT（QQ模块）'
     """
     if not software_name:
         return None
 
     software_name_lower = software_name.lower()
 
-    for folder_name in folder_rules:
-        keyword = extract_folder_keyword(folder_name)
-        if keyword.lower() == software_name_lower:
-            return folder_name
+    for rule in folder_rules:
+        normalized = normalize_rule(rule)
+        if not normalized:
+            continue
+
+        if normalized["keyword"].lower() == software_name_lower:
+            return normalized["folder"]
 
     return None
 
@@ -113,5 +125,31 @@ def format_move_result(results: List[Dict]) -> str:
 
     if not success and not failed:
         lines.append("未找到需要归档的文件。")
+
+    return "\n".join(lines)
+
+
+def format_rules_display(folder_rules: List[Any]) -> str:
+    """
+    格式化规则显示
+
+    Args:
+        folder_rules: 规则列表
+
+    Returns:
+        格式化的显示字符串
+    """
+    if not folder_rules:
+        return "📋 当前未配置任何归档规则。\n\n请在插件配置中添加规则。"
+
+    lines = ["📋 当前归档规则：\n"]
+
+    for rule in folder_rules:
+        normalized = normalize_rule(rule)
+        if normalized:
+            lines.append(f"  • {normalized['keyword']} → {normalized['folder']}")
+
+    lines.append(f"\n共 {len(folder_rules)} 条规则")
+    lines.append("\n使用 /归档 执行文件归档")
 
     return "\n".join(lines)

@@ -1,18 +1,18 @@
 {
     "folder_rules": {
         "description": "文件夹规则列表",
-        "hint": "配置文件夹名称，插件会自动提取括号前的内容作为匹配关键词。例如：'模了个块（QQ TIM模块）' 会匹配文件名中包含 '模了个块' 的文件。",
+        "hint": "每条规则包含 keyword（匹配关键词）和 folder（目标文件夹名）。插件会用 keyword 匹配文件名中的软件名，匹配成功后移动到 folder。也支持简写格式如 'TCQT（QQ模块）'，会自动提取括号前内容作为关键词。",
         "type": "list",
         "default": [
-            "GalQQ（QQ模块）",
-            "I'm Pad（多应用模块）",
-            "ONO（QQ模块）",
-            "QAuxv（QQ TIM模块）",
-            "QFun（QQ模块）",
-            "Serendipity（QQ模块）",
-            "TCQT（QQ模块）",
-            "XAutoDaily（QQ TIM模块）",
-            "模了个块（QQ TIM模块）"
+            {"keyword": "GalQQ", "folder": "GalQQ（QQ模块）"},
+            {"keyword": "I'm Pad", "folder": "I'm Pad（多应用模块）"},
+            {"keyword": "ONO", "folder": "ONO（QQ模块）"},
+            {"keyword": "QAuxv", "folder": "QAuxiliary（QQ TIM模块）"},
+            {"keyword": "QFun", "folder": "QFun（QQ模块）"},
+            {"keyword": "Serendipity", "folder": "Serendipity（QQ模块）"},
+            {"keyword": "TCQT", "folder": "TCQT（QQ模块）"},
+            {"keyword": "XAutoDaily", "folder": "XAutoDaily（QQ TIM模块）"},
+            {"keyword": "模了个块", "folder": "模了个块（QQ TIM模块）"}
         ]
     }
 }

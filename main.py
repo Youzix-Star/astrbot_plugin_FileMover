@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
@@ -7,9 +7,10 @@ from astrbot.api import logger
 
 from .src.utils import (
     extract_software_name,
-    extract_folder_keyword,
+    normalize_rule,
     find_matching_folder,
     format_move_result,
+    format_rules_display,
 )
 
 
@@ -25,15 +26,15 @@ class FileMoverPlugin(Star):
         super().__init__(context)
         self.config = config if config else {}
 
-        # 文件夹规则列表
-        self.folder_rules: List[str] = self.config.get("folder_rules", [])
+        # 文件夹规则列表（支持字符串或字典格式）
+        self.folder_rules: List[Any] = self.config.get("folder_rules", [])
 
         # bot 实例
         self.bot = None
         self._is_llbot = False
 
         logger.info(
-            f"[群文件归档] 插件已加载，配置了 {len(self.folder_rules)} 个文件夹规则"
+            f"[群文件归档] 插件已加载，配置了 {len(self.folder_rules)} 条规则"
         )
 
     def _is_supported_bot_client(self, client) -> bool:
@@ -231,8 +232,7 @@ class FileMoverPlugin(Star):
 
         if not self.folder_rules:
             yield event.plain_result(
-                "❌ 未配置任何文件夹规则。\n\n请在插件配置中添加文件夹名称，例如：\n"
-                "• 模了个块（QQ TIM模块）\n• QAuxv（QQ TIM模块）\n• TCQT（QQ模块）"
+                "❌ 未配置任何文件夹规则。\n\n请在插件配置中添加规则。"
             )
             return
 
@@ -349,25 +349,8 @@ class FileMoverPlugin(Star):
     @filter.command("fmrules", alias={"归档规则", "查看规则"})
     async def on_show_rules_command(self, event: AstrMessageEvent):
         """显示当前配置的归档规则"""
-        if not self.folder_rules:
-            yield event.plain_result(
-                "📋 当前未配置任何归档规则。\n\n"
-                "请在插件配置中添加文件夹名称，例如：\n"
-                "• 模了个块（QQ TIM模块）\n"
-                "• QAuxv（QQ TIM模块）\n"
-                "• TCQT（QQ模块）"
-            )
-            return
-
-        lines = ["📋 当前归档规则：\n"]
-        for folder_name in self.folder_rules:
-            keyword = extract_folder_keyword(folder_name)
-            lines.append(f"  • {keyword} → {folder_name}")
-
-        lines.append(f"\n共 {len(self.folder_rules)} 条规则")
-        lines.append("\n使用 /归档 执行文件归档")
-
-        yield event.plain_result("\n".join(lines))
+        report = format_rules_display(self.folder_rules)
+        yield event.plain_result(report)
 
     # ==================== 指令：测试提取 ====================
 
@@ -403,7 +386,7 @@ class FileMoverPlugin(Star):
             lines.append("\n💡 提示: 文件名需要包含 _ 或 - 分隔符")
         elif not target_folder:
             lines.append(
-                f"\n💡 提示: 需要在配置中添加 '{software_name}（xxx）' 格式的文件夹"
+                f"\n💡 提示: 需要在配置中添加关键词 '{software_name}' 的规则"
             )
 
         yield event.plain_result("\n".join(lines))
