@@ -123,7 +123,6 @@ class FileMoverPlugin(Star):
                 result = await self.bot.api.call_action("get_group_files_by_folder", group_id=group_id, folder_id=parent_id)
             data = result.get("data", result) if isinstance(result, dict) else {}
             folders = data.get("folders", [])
-            # 添加 parent_id 信息
             for f in folders:
                 f["parent_id"] = parent_id or "/"
             return folders
@@ -373,7 +372,7 @@ class FileMoverPlugin(Star):
             else:
                 stats["files_failed"] += 1
             
-            await asyncio.sleep(1)  # 避免请求过快
+            await asyncio.sleep(1)
 
         # 4. 递归处理子文件夹
         sub_folders = await self._get_folders(source_group_id, source_folder_id)
@@ -498,7 +497,8 @@ class FileMoverPlugin(Star):
     async def on_test_command(self, event: AstrMessageEvent):
         """测试文件名提取效果，不会实际移动文件"""
         command_parts = event.message_str.split()
-        if len(command("❓ 用法: /测试归档 <文件名>\n\n示例: /测试归档 QAuxv-v1.6.0.apk")
+        if len(command_parts) < 2:
+            yield event.plain_result("❓ 用法: /测试归档 <文件名>\n\n示例: /测试归档 QAuxv-v1.6.0.apk")
             return
 
         file_name = command_parts[1]
