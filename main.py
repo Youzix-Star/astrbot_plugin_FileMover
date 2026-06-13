@@ -152,12 +152,64 @@ class FileMoverPlugin(Star):
             logger.error(f"[群文件归档] 移动文件失败: {e}")
             return False
 
+    # ==================== 调试模式 ====================
+
+    async def _debug_files(self, group_id: int, scan_all: bool = False) -> str:
+        """调试模式：显示文件详细信息"""
+        if scan_all:
+            all_files = await self._get_all_files(group_id)
+            mode = "所有文件"
+        else:
+            all_files = await self._get_root_files(group_id)
+            mode = "根目录文件"
+
+        lines = [f"📁 扫描范围：{mode}"]
+        lines.append(f"📊 文件总数：{len(all_files)}\n")
+
+        matched = 0
+        unmatched = 0
+        skipped = 0
+
+        for f in all_files:
+            fname = f.get("file_name", "")
+            current_path = f.get("current_folder_path", "")
+            sname = extract_software_name(fname)
+            target = find_matching_folder(sname, self.folder_mapping) if sname else None
+
+            status = ""
+            if current_path:
+                status = "（已在文件夹中）"
+                skipped += 1
+            elif target:
+                status = f"→ {target}"
+                matched += 1
+            else:
+                status = "（无匹配规则）"
+                unmatched += 1
+
+            lines.append(f"  {fname}")
+            lines.append(f"    软件名：{sname or '无法提取'} {status}")
+
+        lines.append(f"\n📈 统计：")
+        lines.append(f"  可归档：{matched} 个")
+        lines.append(f"  无规则：{unmatched} 个")
+        lines.append(f"  已分类：{skipped} 个")
+
+        return "\n".join(lines)
+
     # ==================== 指令：自动归档 ====================
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.command("fm", alias={"归档", "文件归档", "自动归档"})
     async def on_file_move_command(self, event: AstrMessageEvent):
-        """扫描群文件并根据规则自动归档到对应文件夹"""
+        """扫描群文件并根据规则自动归档到对应文件夹
+        
+        用法：
+        /fm - 扫描根目录文件并归档
+        /fm all - 扫描所有文件（包括文件夹内）
+        /fm debug - 调试模式，显示根目录文件详情
+        /fm all debug - 调试模式，显示所有文件详情
+        """
         await self._ensure_bot_bound(event)
         group_id_str = event.get_group_id()
         if not group_id_str:
@@ -175,8 +227,18 @@ class FileMoverPlugin(Star):
 
         # 解析参数
         command_parts = event.message_str.split()
-        scan_all = len(command_parts) > 1 and command_parts[1].lower() == "all"
+        args = [p.lower() for p in command_parts[1:]] if len(command_parts) > 1 else []
+        
+        scan_all = "all" in args
+        debug_mode = "debug" in args
 
+        # 调试模式
+        if debug_mode:
+            debug_result = await self._debug_files(group_id, scan_all)
+            yield event.plain_result(debug_result)
+            return
+
+        # 正常归档模式
         if scan_all:
             yield event.plain_result("扫描所有文件中...")
             all_files = await self._get_all_files(group_id)
@@ -188,6 +250,7 @@ class FileMoverPlugin(Star):
         existing_folder_ids = {f["folder_name"]: f["folder_id"] for f in existing_folders}
 
         results = []
+        skipped = []
         folder_cache = {}
 
         for file_info in all_files:
@@ -200,14 +263,18 @@ class FileMoverPlugin(Star):
 
             software_name = extract_software_name(file_name)
             if not software_name:
+                skipped.append(f"{file_name}（无法提取软件名）")
                 continue
 
             target_folder_name = find_matching_folder(software_name, self.folder_mapping)
             if not target_folder_name:
+                skipped.append(f"{file_name}（无匹配规则）")
                 continue
 
+            # 检查是否已经在目标文件夹中
             current_folder_path = file_info.get("current_folder_path", "")
             if current_folder_path == target_folder_name:
+                skipped.append(f"{file_name}（已在目标文件夹）")
                 continue
 
             target_folder_id = None
@@ -231,6 +298,13 @@ class FileMoverPlugin(Star):
             await asyncio.sleep(0.5)
 
         report = format_move_result(results)
+        
+        # 如果有跳过的文件，显示原因
+        if skipped and not results:
+            report += "\n\n跳过的文件：\n" + "\n".join(f"  {s}" for s in skipped[:10])
+            if len(skipped) > 10:
+                report += f"\n  ...共 {len(skipped)} 个"
+        
         yield event.plain_result(report)
 
     # ==================== 指令：查看规则 ====================
