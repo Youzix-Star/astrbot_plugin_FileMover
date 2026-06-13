@@ -15,10 +15,7 @@ def extract_software_name(file_name: str) -> Optional[str]:
 
 
 def build_folder_mapping(mapping_list: List[str]) -> Dict[str, str]:
-    """将简写列表转换为字典映射
-    
-    格式: ["关键词=文件夹名", ...]
-    """
+    """将简写列表转换为字典映射"""
     result = {}
     for item in mapping_list:
         if not isinstance(item, str) or '=' not in item:
