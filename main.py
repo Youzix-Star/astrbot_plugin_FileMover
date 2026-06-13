@@ -69,7 +69,10 @@ class FileMoverPlugin(Star):
     async def _get_root_files(self, group_id: int) -> List[Dict]:
         """只获取根目录的文件"""
         try:
-            result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+            if self._is_llbot:
+                result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+            else:
+                result = await self.bot.api.call_action("get_group_root_files", group_id=group_id, file_count=2000)
             data = result.get("data", result) if isinstance(result, dict) else {}
             files = data.get("files", [])
             for f in files:
@@ -88,9 +91,15 @@ class FileMoverPlugin(Star):
             folder_id, folder_path = folders_to_scan.pop(0)
             try:
                 if folder_id is None:
-                    result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+                    if self._is_llbot:
+                        result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+                    else:
+                        result = await self.bot.api.call_action("get_group_root_files", group_id=group_id, file_count=2000)
                 else:
-                    result = await self.bot.api.call_action("get_group_files_by_folder", group_id=group_id, folder_id=folder_id)
+                    if self._is_llbot:
+                        result = await self.bot.api.call_action("get_group_files_by_folder", group_id=group_id, folder_id=folder_id)
+                    else:
+                        result = await self.bot.api.call_action("get_group_files_by_folder", group_id=group_id, folder_id=folder_id, file_count=2000)
 
                 data = result.get("data", result) if isinstance(result, dict) else {}
                 for file_info in data.get("files", []):
@@ -109,7 +118,10 @@ class FileMoverPlugin(Star):
     async def _get_folders(self, group_id: int) -> List[Dict]:
         """获取根目录下的所有文件夹"""
         try:
-            result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+            if self._is_llbot:
+                result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+            else:
+                result = await self.bot.api.call_action("get_group_root_files", group_id=group_id, file_count=2000)
             data = result.get("data", result) if isinstance(result, dict) else {}
             return data.get("folders", [])
         except Exception as e:
@@ -178,7 +190,7 @@ class FileMoverPlugin(Star):
 
             status = ""
             if current_path:
-                status = "（已在文件夹中）"
+                status = f"（已在文件夹：{current_path}）"
                 skipped += 1
             elif target:
                 status = f"→ {target}"
