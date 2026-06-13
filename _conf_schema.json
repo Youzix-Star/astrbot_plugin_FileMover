@@ -1,16 +1,18 @@
 {
     "folder_mapping": {
         "description": "文件夹映射规则",
-        "hint": "每行一条规则，格式：关键词=文件夹名。例如：QAuxv=Auxiliary（QQ TIM模块）",
+        "hint": "每行一条规则，格式：关键词=文件夹名。例如：QAuxv=QAuxiliary（QQ TIM模块）",
         "type": "list",
         "default": [
             "GalQQ=GalQQ（QQ模块）",
-            "I'm Pad=I'm Pad（多应用模块）",
             "ONO=ONO（QQ模块）",
             "QAuxv=QAuxiliary（QQ TIM模块）",
             "QFun=QFun（QQ模块）",
+            "QStory=QStory（QQ TIM模块）",
             "Serendipity=Serendipity（QQ模块）",
             "TCQT=TCQT（QQ模块）",
+            "Tim小助手=Tim小助手（QQ TIM模块）",
+            "TSBattery=TSBattery（QQ TIM 微信模块）",
             "XAutoDaily=XAutoDaily（QQ TIM模块）",
             "模了个块=模了个块（QQ TIM模块）"
         ]

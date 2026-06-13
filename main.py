@@ -66,8 +66,23 @@ class FileMoverPlugin(Star):
 
     # ==================== 文件操作 ====================
 
+    async def _get_root_files(self, group_id: int) -> List[Dict]:
+        """只获取根目录的文件（不扫描文件夹内）"""
+        try:
+            result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
+            data = result.get("data", result) if isinstance(result, dict) else {}
+            files = data.get("files", [])
+            # 标记为根目录文件
+            for f in files:
+                f["current_folder_id"] = "/"
+                f["current_folder_path"] = ""
+            return files
+        except Exception as e:
+            logger.error(f"[群文件归档] 获取根目录文件失败: {e}")
+            return []
+
     async def _get_all_files(self, group_id: int) -> List[Dict]:
-        """递归获取群内所有文件"""
+        """递归获取群内所有文件（包括文件夹内）"""
         all_files = []
         folders_to_scan = [(None, "")]
         while folders_to_scan:
@@ -143,7 +158,12 @@ class FileMoverPlugin(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.command("fm", alias={"归档", "文件归档", "自动归档"})
     async def on_file_move_command(self, event: AstrMessageEvent):
-        """扫描群文件并根据规则自动归档到对应文件夹"""
+        """扫描群文件并根据规则自动归档到对应文件夹
+        
+        用法：
+        /fm - 只扫描根目录文件
+        /fm all - 扫描所有文件（包括文件夹内）
+        """
         await self._ensure_bot_bound(event)
         group_id_str = event.get_group_id()
         if not group_id_str:
@@ -159,11 +179,21 @@ class FileMoverPlugin(Star):
             yield event.plain_result("❌ 未配置任何映射规则。\n\n请在插件配置中添加规则。")
             return
 
-        yield event.plain_result("📁 开始扫描群文件并归档...\n这可能需要一些时间，请耐心等待。")
+        # 解析参数
+        command_parts = event.message_str.split()
+        scan_all = len(command_parts) > 1 and command_parts[1].lower() == "all"
 
-        all_files = await self._get_all_files(group_id)
+        if scan_all:
+            yield event.plain_result("📁 开始扫描所有文件（包括文件夹内）并归档...\n这可能需要一些时间，请耐心等待。")
+            all_files = await self._get_all_files(group_id)
+        else:
+            yield event.plain_result("📁 开始扫描根目录文件并归档...\n使用 /fm all 可扫描所有文件。")
+            all_files = await self._get_root_files(group_id)
+
         existing_folders = await self._get_folders(group_id)
         existing_folder_ids = {f["folder_name"]: f["folder_id"] for f in existing_folders}
+
+        logger.info(f"[群文件归档] 获取到 {len(all_files)} 个文件，扫描模式: {'全部' if scan_all else '仅根目录'}")
 
         results = []
         folder_cache = {}
@@ -184,10 +214,12 @@ class FileMoverPlugin(Star):
             if not target_folder_name:
                 continue
 
+            # 检查是否已经在目标文件夹中
             current_folder_path = file_info.get("current_folder_path", "")
             if current_folder_path == target_folder_name:
                 continue
 
+            # 获取或创建目标文件夹
             target_folder_id = None
             if target_folder_name in folder_cache:
                 target_folder_id = folder_cache[target_folder_name]
