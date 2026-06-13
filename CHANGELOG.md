@@ -1,7 +1,7 @@
 # 📝 更新日志
 
 ## v0.5 (2026-06-13)
-* 修复 object 类型配置缺少 items 字段。
+* 修复 配置格式改为 list 类型，添加 build_folder_mapping 转换函数。
 
 ## v0.4 (2026-06-13)
 * 修复 配置类型错误，将 dict 改为 object。

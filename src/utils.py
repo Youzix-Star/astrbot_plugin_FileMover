@@ -3,57 +3,39 @@ from typing import Optional, List, Dict
 
 
 def extract_software_name(file_name: str) -> Optional[str]:
-    """
-    从文件名中提取软件名（第一个 _ 或 - 之前的部分）
-
-    示例：
-        >>> extract_software_name("模了个块_5.4.apk")
-        '模了个块'
-        >>> extract_software_name("QAuxv-v1.6.0.r2968.68b64ac-arm64.apk")
-        'QAuxv'
-        >>> extract_software_name("TCQT-3.6.4.r515.fe27c90-release.apk")
-        'TCQT'
-    """
+    """从文件名中提取软件名（第一个 _ 或 - 之前的部分）"""
     if not file_name:
         return None
 
-    # 去掉扩展名
     name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
-
-    # 截取第一个 _ 或 - 之前的部分
     match = re.match(r'^([^_-]+)', name)
     if match:
         result = match.group(1).strip()
         return result if result else None
-
     return None
 
 
+def build_folder_mapping(mapping_list: List[Dict]) -> Dict[str, str]:
+    """将配置列表转换为字典映射"""
+    result = {}
+    for item in mapping_list:
+        if isinstance(item, dict):
+            keyword = item.get("keyword", "").strip()
+            folder = item.get("folder", "").strip()
+            if keyword and folder:
+                result[keyword] = folder
+    return result
+
+
 def find_matching_folder(software_name: str, folder_mapping: Dict[str, str]) -> Optional[str]:
-    """
-    根据软件名查找匹配的文件夹
-
-    Args:
-        software_name: 从文件名中提取的软件名
-        folder_mapping: 映射字典 {关键词: 文件夹名}
-
-    Returns:
-        匹配的文件夹名称，未匹配返回 None
-
-    示例：
-        >>> mapping = {"QAuxv": "Auxiliary（QQ TIM模块）", "TCQT": "TCQT（QQ模块）"}
-        >>> find_matching_folder("QAuxv", mapping)
-        'Auxiliary（QQ TIM模块）'
-    """
+    """根据软件名查找匹配的文件夹"""
     if not software_name or not folder_mapping:
         return None
 
     software_name_lower = software_name.lower()
-
     for keyword, folder_name in folder_mapping.items():
         if keyword.lower() == software_name_lower:
             return folder_name
-
     return None
 
 
@@ -89,7 +71,6 @@ def format_mapping_display(folder_mapping: Dict[str, str]) -> str:
         return "📋 当前未配置任何映射规则。\n\n请在插件配置中添加规则。"
 
     lines = ["📋 当前映射规则：\n"]
-
     for keyword, folder_name in folder_mapping.items():
         lines.append(f"  • {keyword} → {folder_name}")
 
