@@ -2,7 +2,7 @@
     "folder_mapping": {
         "description": "文件夹映射规则",
         "hint": "键为匹配的关键词（文件名中 _ 或 - 之前的部分），值为目标文件夹名称。",
-        "type": "dict",
+        "type": "object",
         "default": {
             "GalQQ": "GalQQ（QQ模块）",
             "I'm Pad": "I'm Pad（多应用模块）",
