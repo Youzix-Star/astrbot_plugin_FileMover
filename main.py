@@ -1,6 +1,5 @@
 import asyncio
 import os
-import shutil
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -8,10 +7,7 @@ from typing import Dict, List, Optional
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
-from astrbot.api.web import (
-    json_response, error_response, request,
-    PluginUploadFile, file_response
-)
+from astrbot.api.web import route, GET, POST, PluginUploadFile, json_response, error_response
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .src.utils import (
@@ -41,35 +37,13 @@ class FileMoverPlugin(Star):
         self.upload_dir = Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME / "uploads"
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
-        # 注册 Web API
-        self._register_web_apis()
-
         logger.info(f"[群文件归档] 插件已加载，配置了 {len(self.folder_mapping)} 条映射规则")
         logger.info(f"[群文件归档] 上传目录: {self.upload_dir}")
 
-    # ========== 注册 Web 路由 ==========
-    def _register_web_apis(self):
-        self.context.register_web_api(
-            "/groups",
-            self.api_get_groups,
-            ["GET"],
-            "获取机器人加入的群列表"
-        )
-        self.context.register_web_api(
-            "/folders",
-            self.api_get_folders,
-            ["GET"],
-            "获取指定群的根目录文件夹列表"
-        )
-        self.context.register_web_api(
-            "/upload",
-            self.api_upload_and_distribute,
-            ["POST"],
-            "上传文件并分发到多个群"
-        )
+    # ========== Web 路由（使用 @route 装饰器） ==========
 
-    # ========== Web API 实现 ==========
-    async def api_get_groups(self):
+    @route("/groups", method=GET)
+    async def api_get_groups(self, request):
         """获取群列表"""
         await self._try_bind_bot()
         if not self.bot:
@@ -83,7 +57,8 @@ class FileMoverPlugin(Star):
             logger.error(f"获取群列表失败: {e}")
             return error_response(str(e), status_code=500)
 
-    async def api_get_folders(self):
+    @route("/folders", method=GET)
+    async def api_get_folders(self, request):
         """获取根目录文件夹"""
         await self._try_bind_bot()
         if not self.bot:
@@ -106,7 +81,8 @@ class FileMoverPlugin(Star):
             logger.error(f"获取文件夹列表失败: {e}")
             return error_response(str(e), status_code=500)
 
-    async def api_upload_and_distribute(self):
+    @route("/upload", method=POST)
+    async def api_upload_and_distribute(self, request):
         """上传并分发"""
         await self._try_bind_bot()
         if not self.bot:
