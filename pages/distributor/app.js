@@ -3,14 +3,7 @@ const bridge = window.AstrBotPluginPage;
 // ==================== 状态管理 ====================
 const state = {
     selectedFile: null,
-    groups: [],
-    folders: [],
-    selectedGroups: [],
-    selectedFolder: '',
-    autoClassify: false,
-    isDistributing: false,
-    isLoadingGroups: false,
-    isLoadingFolders: false
+    isDistributing: false
 };
 
 // ==================== DOM 引用 ====================
@@ -21,8 +14,8 @@ const fileInfo = $('fileInfo');
 const fileName = $('fileName');
 const fileSize = $('fileSize');
 const removeFileBtn = $('removeFile');
-const groupSelect = $('groupSelect');
-const folderSelect = $('folderSelect');
+const groupIdsInput = $('groupIdsInput');
+const folderInput = $('folderInput');
 const autoClassify = $('autoClassify');
 const distributeBtn = $('distributeBtn');
 const resultArea = $('resultArea');
@@ -40,22 +33,22 @@ async function init() {
         pluginName = context.pluginName;
         console.log('Plugin context:', context);
         
-        // 加载群列表（带转圈）
-        await loadGroups();
-        
         // 监听主题切换
         bridge.onContext(() => {
             const isDark = bridge.getContext()?.isDark || false;
             document.getElementById('app').setAttribute('data-theme', isDark ? 'dark' : 'light');
         });
+
+        // 监听输入变化，更新按钮状态
+        groupIdsInput.addEventListener('input', updateDistributeBtn);
+        folderInput.addEventListener('input', updateDistributeBtn);
+        autoClassify.addEventListener('change', updateDistributeBtn);
+
+        // 初始化按钮状态
+        updateDistributeBtn();
     } catch (err) {
         console.error('初始化失败:', err);
-        groupSelect.innerHTML = `
-            <div class="loading-state error-msg">
-                <span>❌ 插件初始化失败: ${err.message}</span>
-                <button class="retry-btn" onclick="window._retryInit()">重试</button>
-            </div>
-        `;
+        alert(`插件初始化失败: ${err.message}`);
     }
 }
 
@@ -64,142 +57,15 @@ function getApiUrl(path) {
     return `/api/v1/plugins/extensions/${pluginName}${path}`;
 }
 
-// ==================== 加载群列表（带转圈 + 重试） ====================
-async function loadGroups() {
-    if (state.isLoadingGroups) return;
-    state.isLoadingGroups = true;
-
-    // 显示转圈加载
-    groupSelect.innerHTML = `
-        <div class="loading-state">
-            <span class="spinner"></span>
-            加载群列表中...
-        </div>
-    `;
-
-    try {
-        const response = await fetch(getApiUrl('/groups'), {
-            credentials: 'include'
-        });
-        const result = await response.json();
-        console.log('Groups response:', result);
-        
-        state.groups = result.data?.groups || result.groups || [];
-        renderGroupSelect();
-        
-        // 加载第一个群的文件夹
-        if (state.groups.length > 0) {
-            await loadFolders(state.groups[0].group_id);
-        }
-    } catch (err) {
-        console.error('加载群列表失败:', err);
-        groupSelect.innerHTML = `
-            <div class="loading-state error-msg">
-                <span>❌ 加载失败: ${err.message}</span>
-                <button class="retry-btn" id="retryGroupsBtn">重试</button>
-            </div>
-        `;
-        const retryBtn = document.getElementById('retryGroupsBtn');
-        if (retryBtn) {
-            retryBtn.addEventListener('click', () => loadGroups());
-        }
-    } finally {
-        state.isLoadingGroups = false;
-    }
-}
-
-// ==================== 加载文件夹列表（带转圈） ====================
-async function loadFolders(groupId) {
-    if (!groupId) return;
-    if (state.isLoadingFolders) return;
-    state.isLoadingFolders = true;
-
-    // 显示加载状态
-    folderSelect.innerHTML = `
-        <option value="" disabled class="folder-loading-select">⏳ 加载文件夹...</option>
-    `;
-    folderSelect.disabled = true;
-
-    try {
-        const response = await fetch(getApiUrl(`/folders?group_id=${groupId}`), {
-            credentials: 'include'
-        });
-        const result = await response.json();
-        state.folders = result.data?.folders || result.folders || [];
-        renderFolderSelect();
-    } catch (err) {
-        console.error('加载文件夹列表失败:', err);
-        folderSelect.innerHTML = `
-            <option value="">❌ 加载失败，请重试</option>
-        `;
-        folderSelect.disabled = false;
-    } finally {
-        state.isLoadingFolders = false;
-    }
-}
-
-// ==================== 渲染群列表 ====================
-function renderGroupSelect() {
-    if (state.groups.length === 0) {
-        groupSelect.innerHTML = `
-            <div class="loading-state" style="color: var(--text-secondary);">
-                <span>⚠️ 未加入任何群聊</span>
-                <button class="retry-btn" id="retryGroupsBtn">刷新</button>
-            </div>
-        `;
-        const retryBtn = document.getElementById('retryGroupsBtn');
-        if (retryBtn) {
-            retryBtn.addEventListener('click', () => loadGroups());
-        }
-        return;
-    }
-    
-    const select = document.createElement('select');
-    select.multiple = true;
-    select.size = Math.min(state.groups.length, 6);
-    select.id = 'groupSelectInner';
-    
-    state.groups.forEach(g => {
-        const opt = document.createElement('option');
-        opt.value = g.group_id;
-        const name = g.group_name || g.group_id;
-        opt.textContent = `${name} (${g.group_id})`;
-        select.appendChild(opt);
-    });
-    
-    select.addEventListener('change', () => {
-        state.selectedGroups = Array.from(select.selectedOptions).map(o => o.value);
-        updateDistributeBtn();
-        // 单选时加载文件夹
-        if (state.selectedGroups.length === 1) {
-            loadFolders(parseInt(state.selectedGroups[0]));
-        } else {
-            folderSelect.innerHTML = '<option value="">（多群选择，文件夹将自动创建）</option>';
-            folderSelect.disabled = false;
-        }
-    });
-    
-    groupSelect.innerHTML = '';
-    groupSelect.appendChild(select);
-    updateDistributeBtn();
-}
-
-// ==================== 渲染文件夹列表 ====================
-function renderFolderSelect() {
-    folderSelect.innerHTML = '<option value="">（根目录）</option>';
-    state.folders.forEach(f => {
-        const opt = document.createElement('option');
-        opt.value = f.folder_name;
-        opt.textContent = f.folder_name;
-        folderSelect.appendChild(opt);
-    });
-    folderSelect.value = state.selectedFolder;
-    folderSelect.disabled = false;
-}
-
 // ==================== 更新分发按钮状态 ====================
 function updateDistributeBtn() {
-    distributeBtn.disabled = !state.selectedFile || state.selectedGroups.length === 0 || state.isDistributing;
+    const hasFile = !!state.selectedFile;
+    // 获取群号列表，过滤空值
+    const raw = groupIdsInput.value;
+    const groups = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const hasGroups = groups.length > 0;
+    
+    distributeBtn.disabled = !hasFile || !hasGroups || state.isDistributing;
 }
 
 // ==================== 文件上传 ====================
@@ -241,37 +107,74 @@ removeFileBtn.addEventListener('click', () => {
     updateDistributeBtn();
 });
 
-// ==================== 分发 ====================
-autoClassify.addEventListener('change', () => {
-    state.autoClassify = autoClassify.checked;
-});
+// ==================== 解析群号 ====================
+function parseGroupIds(input) {
+    return input.split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0 && /^\d+$/.test(s));
+}
 
+// ==================== 分发 ====================
 distributeBtn.addEventListener('click', async () => {
     if (state.isDistributing) return;
-    
+
+    // 1. 解析群号
+    const groupIds = parseGroupIds(groupIdsInput.value);
+    if (groupIds.length === 0) {
+        alert('请填写至少一个有效的群号（纯数字）。');
+        return;
+    }
+
+    // 2. 准备 FormData
     const formData = new FormData();
     formData.append('file', state.selectedFile);
-    formData.append('target_groups', state.selectedGroups.join(','));
-    formData.append('target_folder', state.selectedFolder || '');
-    formData.append('auto_classify', state.autoClassify ? 'true' : 'false');
+    formData.append('target_groups', groupIds.join(','));
     
+    // 如果开启了自动分类，后端会忽略 target_folder，但前端还是传一个空值或文件夹名
+    // 为了逻辑清晰，如果开启自动分类，我们传空字符串让后端自己算
+    if (autoClassify.checked) {
+        formData.append('target_folder', '');
+        formData.append('auto_classify', 'true');
+    } else {
+        formData.append('target_folder', folderInput.value.trim() || '');
+        formData.append('auto_classify', 'false');
+    }
+
+    // 3. UI 加载状态
     state.isDistributing = true;
     distributeBtn.disabled = true;
     distributeBtn.textContent = '分发中...';
     distributeBtn.classList.add('loading');
     resultArea.style.display = 'none';
-    
+
     try {
         const response = await fetch(getApiUrl('/upload'), {
             method: 'POST',
             body: formData,
             credentials: 'include'
         });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+
         const result = await response.json();
         showResults(result.data || result);
     } catch (err) {
         console.error('分发失败:', err);
         alert(`分发失败: ${err.message}`);
+        // 显示错误结果
+        resultArea.style.display = 'block';
+        totalCount.textContent = '0';
+        successCount.textContent = '0';
+        failedCount.textContent = '1';
+        resultList.innerHTML = `
+            <div class="result-item">
+                <span>系统</span>
+                <span class="status failed">❌ 请求失败: ${err.message}</span>
+            </div>
+        `;
     } finally {
         state.isDistributing = false;
         distributeBtn.disabled = false;
@@ -289,22 +192,22 @@ function showResults(result) {
     failedCount.textContent = result.failed_count || 0;
     
     resultList.innerHTML = '';
-    (result.results || []).forEach(r => {
-        const div = document.createElement('div');
-        div.className = 'result-item';
-        div.innerHTML = `
-            <span>群 ${r.group_id}</span>
-            <span class="status ${r.success ? 'success' : 'failed'}">
-                ${r.success ? '✅ 成功' : '❌ ' + (r.error || '失败')}
-            </span>
-        `;
-        resultList.appendChild(div);
-    });
+    if (result.results && result.results.length > 0) {
+        result.results.forEach(r => {
+            const div = document.createElement('div');
+            div.className = 'result-item';
+            div.innerHTML = `
+                <span>群 ${r.group_id}</span>
+                <span class="status ${r.success ? 'success' : 'failed'}">
+                    ${r.success ? '✅ 成功' : '❌ ' + (r.error || '失败')}
+                </span>
+            `;
+            resultList.appendChild(div);
+        });
+    } else {
+        resultList.innerHTML = '<div class="result-item">没有返回详细结果。</div>';
+    }
 }
-
-// ==================== 暴露给全局（用于重试） ====================
-window._retryLoadGroups = loadGroups;
-window._retryInit = init;
 
 // ==================== 启动 ====================
 init();
