@@ -63,6 +63,13 @@ class FileMoverPlugin(Star):
             ["POST"],
             "上传文件并分发"
         )
+        # 🆕 测试路由，用于验证后端是否可达
+        self.context.register_web_api(
+            "/ping",
+            self.api_ping,
+            ["GET"],
+            "测试后端连通性"
+        )
         logger.info("[群文件归档] Web 路由已注册")
 
         # 绑定 Bot
@@ -72,6 +79,11 @@ class FileMoverPlugin(Star):
         logger.info("[群文件归档] 插件已卸载")
 
     # ========== Web API 实现 ==========
+
+    # 🆕 测试路由
+    async def api_ping(self, request):
+        """简单测试接口，返回 pong"""
+        return json_response({"status": "ok", "message": "pong"})
 
     async def api_get_groups(self, request):
         """获取群列表"""
@@ -112,8 +124,12 @@ class FileMoverPlugin(Star):
 
     async def api_upload_and_distribute(self, request):
         """上传并分发"""
+        # 🆕 入口日志
+        logger.info("[群文件归档] 收到 /upload 请求")
+
         await self._try_bind_bot()
         if not self.bot:
+            logger.error("[群文件归档] Bot 未绑定")
             return error_response("未连接到 Bot", status_code=503)
 
         # 解析表单
@@ -122,11 +138,13 @@ class FileMoverPlugin(Star):
 
         upload: PluginUploadFile | None = files.get("file")
         if not isinstance(upload, PluginUploadFile):
+            logger.error("[群文件归档] 未上传文件")
             return error_response("未上传文件", status_code=400)
 
         # 目标群
         target_groups_str = form.get("target_groups", "")
         if not target_groups_str:
+            logger.error("[群文件归档] 未指定目标群")
             return error_response("请选择目标群", status_code=400)
         target_groups = [g.strip() for g in target_groups_str.split(",") if g.strip()]
         if not target_groups:
@@ -142,6 +160,7 @@ class FileMoverPlugin(Star):
         temp_name = f"{temp_id}_{original_name}"
         temp_path = self.upload_dir / temp_name
         await upload.save(temp_path)
+        logger.info(f"[群文件归档] 文件已保存: {temp_path}")
 
         # 分发
         results = []
@@ -156,28 +175,34 @@ class FileMoverPlugin(Star):
                         matched_folder = find_matching_folder(software, self.folder_mapping)
                         if matched_folder:
                             target_folder = matched_folder
+                            logger.info(f"[群文件归档] 自动分类: {software} -> {target_folder}")
 
                 if target_folder:
                     folder_id = await self._get_or_create_folder(gid, target_folder)
+                    logger.info(f"[群文件归档] 群 {gid} 文件夹 ID: {folder_id}")
 
                 await self._upload_file_to_group(gid, str(temp_path), original_name, folder_id)
                 results.append({"group_id": group_id, "success": True})
+                logger.info(f"[群文件归档] 群 {gid} 分发成功")
             except Exception as e:
-                logger.error(f"分发到群 {group_id} 失败: {e}")
+                logger.error(f"[群文件归档] 分发到群 {group_id} 失败: {e}")
                 results.append({"group_id": group_id, "success": False, "error": str(e)})
 
         # 清理临时文件
         try:
             os.remove(temp_path)
-        except Exception:
-            pass
+            logger.info(f"[群文件归档] 临时文件已删除: {temp_path}")
+        except Exception as e:
+            logger.warning(f"[群文件归档] 删除临时文件失败: {e}")
 
-        return json_response({
+        response = {
             "results": results,
             "total": len(results),
             "success_count": sum(1 for r in results if r["success"]),
             "failed_count": sum(1 for r in results if not r["success"])
-        })
+        }
+        logger.info(f"[群文件归档] 分发完成: {response}")
+        return json_response(response)
 
     # ========== 辅助方法（文件操作） ==========
 

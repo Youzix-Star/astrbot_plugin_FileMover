@@ -31,8 +31,12 @@ async function init() {
     try {
         const context = await bridge.ready();
         pluginName = context.pluginName;
-        console.log('Plugin context:', context);
+        console.log('[FileMover] Plugin context:', context);
+        console.log('[FileMover] Plugin name:', pluginName);
         
+        // 测试后端连通性
+        await testBackend();
+
         // 监听主题切换
         bridge.onContext(() => {
             const isDark = bridge.getContext()?.isDark || false;
@@ -47,20 +51,38 @@ async function init() {
         // 初始化按钮状态
         updateDistributeBtn();
     } catch (err) {
-        console.error('初始化失败:', err);
+        console.error('[FileMover] 初始化失败:', err);
         alert(`插件初始化失败: ${err.message}`);
     }
 }
 
 // ==================== 构造请求 URL ====================
 function getApiUrl(path) {
-    return `/api/v1/plugins/extensions/${pluginName}${path}`;
+    const url = `/api/v1/plugins/extensions/${pluginName}${path}`;
+    console.log('[FileMover] 请求 URL:', url);
+    return url;
+}
+
+// ==================== 测试后端连通性 ====================
+async function testBackend() {
+    try {
+        const response = await fetch(getApiUrl('/ping'), {
+            credentials: 'include'
+        });
+        if (response.ok) {
+            const data = await response.json();
+            console.log('[FileMover] 后端连通性测试成功:', data);
+        } else {
+            console.warn('[FileMover] 后端连通性测试失败:', response.status, response.statusText);
+        }
+    } catch (err) {
+        console.error('[FileMover] 后端连通性测试异常:', err);
+    }
 }
 
 // ==================== 更新分发按钮状态 ====================
 function updateDistributeBtn() {
     const hasFile = !!state.selectedFile;
-    // 获取群号列表，过滤空值
     const raw = groupIdsInput.value;
     const groups = raw.split(',').map(s => s.trim()).filter(Boolean);
     const hasGroups = groups.length > 0;
@@ -118,20 +140,16 @@ function parseGroupIds(input) {
 distributeBtn.addEventListener('click', async () => {
     if (state.isDistributing) return;
 
-    // 1. 解析群号
     const groupIds = parseGroupIds(groupIdsInput.value);
     if (groupIds.length === 0) {
         alert('请填写至少一个有效的群号（纯数字）。');
         return;
     }
 
-    // 2. 准备 FormData
     const formData = new FormData();
     formData.append('file', state.selectedFile);
     formData.append('target_groups', groupIds.join(','));
     
-    // 如果开启了自动分类，后端会忽略 target_folder，但前端还是传一个空值或文件夹名
-    // 为了逻辑清晰，如果开启自动分类，我们传空字符串让后端自己算
     if (autoClassify.checked) {
         formData.append('target_folder', '');
         formData.append('auto_classify', 'true');
@@ -140,19 +158,23 @@ distributeBtn.addEventListener('click', async () => {
         formData.append('auto_classify', 'false');
     }
 
-    // 3. UI 加载状态
     state.isDistributing = true;
     distributeBtn.disabled = true;
     distributeBtn.textContent = '分发中...';
     distributeBtn.classList.add('loading');
     resultArea.style.display = 'none';
 
+    const url = getApiUrl('/upload');
+    console.log('[FileMover] 发起分发请求:', url);
+
     try {
-        const response = await fetch(getApiUrl('/upload'), {
+        const response = await fetch(url, {
             method: 'POST',
             body: formData,
             credentials: 'include'
         });
+
+        console.log('[FileMover] 响应状态:', response.status);
 
         if (!response.ok) {
             const text = await response.text();
@@ -160,11 +182,11 @@ distributeBtn.addEventListener('click', async () => {
         }
 
         const result = await response.json();
+        console.log('[FileMover] 分发结果:', result);
         showResults(result.data || result);
     } catch (err) {
-        console.error('分发失败:', err);
+        console.error('[FileMover] 分发失败:', err);
         alert(`分发失败: ${err.message}`);
-        // 显示错误结果
         resultArea.style.display = 'block';
         totalCount.textContent = '0';
         successCount.textContent = '0';
