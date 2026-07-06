@@ -164,7 +164,192 @@ class FileMoverPlugin(Star):
             logger.error(f"[群文件归档] 移动文件失败: {e}")
             return False
 
-    # ==================== 调试模式 ====================
+    # ==================== 🆕 公开方法：供其他插件调用 ====================
+
+    async def archive_group(self, group_id: int, scan_all: bool = False) -> str:
+        """
+        公开方法：对指定群执行归档操作
+        
+        :param group_id: 群号
+        :param scan_all: 是否扫描全部文件（含子文件夹），默认只扫根目录
+        :return: 归档结果报告文本（等同 /fm 指令的输出）
+        
+        其他插件调用示例：
+            filemover = self.context.get_plugin("astrbot_plugin_FileMover")
+            report = await filemover.archive_group(12345678)
+        """
+        if not self.bot:
+            await self._try_bind_bot()
+            if not self.bot:
+                return "无法获取 Bot 实例。"
+
+        if not self.folder_mapping:
+            return "未配置映射规则。"
+
+        if scan_all:
+            all_files = await self._get_all_files(group_id)
+        else:
+            all_files = await self._get_root_files(group_id)
+
+        existing_folders = await self._get_folders(group_id)
+        existing_folder_ids = {f["folder_name"]: f["folder_id"] for f in existing_folders}
+        folder_cache = {}
+        results = []
+        skipped = []
+
+        for file_info in all_files:
+            file_name = file_info.get("file_name", "")
+            file_id = file_info.get("file_id", "")
+            current_folder_id = file_info.get("current_folder_id", "/")
+
+            if not file_name or not file_id:
+                continue
+
+            software_name = extract_software_name(file_name)
+            if not software_name:
+                skipped.append(f"{file_name}（无法提取软件名）")
+                continue
+
+            target_folder_name = find_matching_folder(software_name, self.folder_mapping)
+            if not target_folder_name:
+                skipped.append(f"{file_name}（无匹配规则）")
+                continue
+
+            current_folder_path = file_info.get("current_folder_path", "")
+            if current_folder_path == target_folder_name:
+                skipped.append(f"{file_name}（已在目标文件夹）")
+                continue
+
+            target_folder_id = None
+            if target_folder_name in folder_cache:
+                target_folder_id = folder_cache[target_folder_name]
+            elif target_folder_name in existing_folder_ids:
+                target_folder_id = existing_folder_ids[target_folder_name]
+                folder_cache[target_folder_name] = target_folder_id
+            else:
+                target_folder_id = await self._create_folder(group_id, target_folder_name)
+                if target_folder_id:
+                    folder_cache[target_folder_name] = target_folder_id
+                    existing_folder_ids[target_folder_name] = target_folder_id
+
+            if not target_folder_id:
+                results.append({"file_name": file_name, "success": False, "error": "创建文件夹失败"})
+                continue
+
+            success = await self._move_file(group_id, file_id, current_folder_id, target_folder_id)
+            results.append({
+                "file_name": file_name,
+                "folder": target_folder_name,
+                "success": success,
+                "error": "移动失败" if not success else None,
+            })
+            await asyncio.sleep(0.3)
+
+        report = format_move_result(results)
+        if skipped and not results:
+            report += "\n\n跳过的文件：\n" + "\n".join(f"  {s}" for s in skipped[:10])
+            if len(skipped) > 10:
+                report += f"\n  ...共 {len(skipped)} 个"
+
+        return report
+
+    # ==================== 指令：自动归档 ====================
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.command("fm", alias={"归档", "文件归档", "自动归档"})
+    async def on_file_move_command(self, event: AstrMessageEvent):
+        """扫描群文件并根据规则自动归档到对应文件夹"""
+        await self._ensure_bot_bound(event)
+        group_id_str = event.get_group_id()
+        if not group_id_str:
+            yield event.plain_result("此指令只能在群聊中使用。")
+            return
+
+        group_id = int(group_id_str)
+        if not self.bot:
+            yield event.plain_result("未获取到 Bot 实例，请稍后重试。")
+            return
+
+        if not self.folder_mapping:
+            yield event.plain_result("未配置映射规则。")
+            return
+
+        command_parts = event.message_str.split()
+        args = [p.lower() for p in command_parts[1:]] if len(command_parts) > 1 else []
+        
+        scan_all = "all" in args
+        debug_mode = "debug" in args
+
+        if debug_mode:
+            debug_result = await self._debug_files(group_id, scan_all)
+            yield event.plain_result(debug_result)
+            return
+
+        if scan_all:
+            yield event.plain_result("扫描所有文件中...")
+            all_files = await self._get_all_files(group_id)
+        else:
+            yield event.plain_result("扫描根目录文件中...\n（/fm all 扫描全部）")
+            all_files = await self._get_root_files(group_id)
+
+        existing_folders = await self._get_folders(group_id)
+        existing_folder_ids = {f["folder_name"]: f["folder_id"] for f in existing_folders}
+
+        results = []
+        skipped = []
+        folder_cache = {}
+
+        for file_info in all_files:
+            file_name = file_info.get("file_name", "")
+            file_id = file_info.get("file_id", "")
+            current_folder_id = file_info.get("current_folder_id", "/")
+
+            if not file_name or not file_id:
+                continue
+
+            software_name = extract_software_name(file_name)
+            if not software_name:
+                skipped.append(f"{file_name}（无法提取软件名）")
+                continue
+
+            target_folder_name = find_matching_folder(software_name, self.folder_mapping)
+            if not target_folder_name:
+                skipped.append(f"{file_name}（无匹配规则）")
+                continue
+
+            current_folder_path = file_info.get("current_folder_path", "")
+            if current_folder_path == target_folder_name:
+                skipped.append(f"{file_name}（已在目标文件夹）")
+                continue
+
+            target_folder_id = None
+            if target_folder_name in folder_cache:
+                target_folder_id = folder_cache[target_folder_name]
+            elif target_folder_name in existing_folder_ids:
+                target_folder_id = existing_folder_ids[target_folder_name]
+                folder_cache[target_folder_name] = target_folder_id
+            else:
+                target_folder_id = await self._create_folder(group_id, target_folder_name)
+                if target_folder_id:
+                    folder_cache[target_folder_name] = target_folder_id
+                    existing_folder_ids[target_folder_name] = target_folder_id
+
+            if not target_folder_id:
+                results.append({"file_name": file_name, "success": False, "error": "创建文件夹失败"})
+                continue
+
+            success = await self._move_file(group_id, file_id, current_folder_id, target_folder_id)
+            results.append({"file_name": file_name, "folder": target_folder_name, "success": success, "error": "移动失败" if not success else None})
+            await asyncio.sleep(0.5)
+
+        report = format_move_result(results)
+        
+        if skipped and not results:
+            report += "\n\n跳过的文件：\n" + "\n".join(f"  {s}" for s in skipped[:10])
+            if len(skipped) > 10:
+                report += f"\n  ...共 {len(skipped)} 个"
+        
+        yield event.plain_result(report)
 
     async def _debug_files(self, group_id: int, scan_all: bool = False) -> str:
         """调试模式：显示文件详细信息"""
@@ -208,116 +393,6 @@ class FileMoverPlugin(Star):
         lines.append(f"  已分类：{skipped} 个")
 
         return "\n".join(lines)
-
-    # ==================== 指令：自动归档 ====================
-
-    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
-    @filter.command("fm", alias={"归档", "文件归档", "自动归档"})
-    async def on_file_move_command(self, event: AstrMessageEvent):
-        """扫描群文件并根据规则自动归档到对应文件夹
-        
-        用法：
-        /fm - 扫描根目录文件并归档
-        /fm all - 扫描所有文件（包括文件夹内）
-        /fm debug - 调试模式，显示根目录文件详情
-        /fm all debug - 调试模式，显示所有文件详情
-        """
-        await self._ensure_bot_bound(event)
-        group_id_str = event.get_group_id()
-        if not group_id_str:
-            yield event.plain_result("此指令只能在群聊中使用。")
-            return
-
-        group_id = int(group_id_str)
-        if not self.bot:
-            yield event.plain_result("未获取到 Bot 实例，请稍后重试。")
-            return
-
-        if not self.folder_mapping:
-            yield event.plain_result("未配置映射规则。")
-            return
-
-        # 解析参数
-        command_parts = event.message_str.split()
-        args = [p.lower() for p in command_parts[1:]] if len(command_parts) > 1 else []
-        
-        scan_all = "all" in args
-        debug_mode = "debug" in args
-
-        # 调试模式
-        if debug_mode:
-            debug_result = await self._debug_files(group_id, scan_all)
-            yield event.plain_result(debug_result)
-            return
-
-        # 正常归档模式
-        if scan_all:
-            yield event.plain_result("扫描所有文件中...")
-            all_files = await self._get_all_files(group_id)
-        else:
-            yield event.plain_result("扫描根目录文件中...\n（/fm all 扫描全部）")
-            all_files = await self._get_root_files(group_id)
-
-        existing_folders = await self._get_folders(group_id)
-        existing_folder_ids = {f["folder_name"]: f["folder_id"] for f in existing_folders}
-
-        results = []
-        skipped = []
-        folder_cache = {}
-
-        for file_info in all_files:
-            file_name = file_info.get("file_name", "")
-            file_id = file_info.get("file_id", "")
-            current_folder_id = file_info.get("current_folder_id", "/")
-
-            if not file_name or not file_id:
-                continue
-
-            software_name = extract_software_name(file_name)
-            if not software_name:
-                skipped.append(f"{file_name}（无法提取软件名）")
-                continue
-
-            target_folder_name = find_matching_folder(software_name, self.folder_mapping)
-            if not target_folder_name:
-                skipped.append(f"{file_name}（无匹配规则）")
-                continue
-
-            # 检查是否已经在目标文件夹中
-            current_folder_path = file_info.get("current_folder_path", "")
-            if current_folder_path == target_folder_name:
-                skipped.append(f"{file_name}（已在目标文件夹）")
-                continue
-
-            target_folder_id = None
-            if target_folder_name in folder_cache:
-                target_folder_id = folder_cache[target_folder_name]
-            elif target_folder_name in existing_folder_ids:
-                target_folder_id = existing_folder_ids[target_folder_name]
-                folder_cache[target_folder_name] = target_folder_id
-            else:
-                target_folder_id = await self._create_folder(group_id, target_folder_name)
-                if target_folder_id:
-                    folder_cache[target_folder_name] = target_folder_id
-                    existing_folder_ids[target_folder_name] = target_folder_id
-
-            if not target_folder_id:
-                results.append({"file_name": file_name, "success": False, "error": "创建文件夹失败"})
-                continue
-
-            success = await self._move_file(group_id, file_id, current_folder_id, target_folder_id)
-            results.append({"file_name": file_name, "folder": target_folder_name, "success": success, "error": "移动失败" if not success else None})
-            await asyncio.sleep(0.5)
-
-        report = format_move_result(results)
-        
-        # 如果有跳过的文件，显示原因
-        if skipped and not results:
-            report += "\n\n跳过的文件：\n" + "\n".join(f"  {s}" for s in skipped[:10])
-            if len(skipped) > 10:
-                report += f"\n  ...共 {len(skipped)} 个"
-        
-        yield event.plain_result(report)
 
     # ==================== 指令：查看规则 ====================
 
