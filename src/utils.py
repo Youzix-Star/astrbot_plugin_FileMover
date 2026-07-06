@@ -1,6 +1,7 @@
 import re
 from typing import Optional, List, Dict
 
+
 def extract_software_name(file_name: str) -> Optional[str]:
     """从文件名中提取软件名（第一个 _ 或 - 之前的部分）"""
     if not file_name:
@@ -11,6 +12,7 @@ def extract_software_name(file_name: str) -> Optional[str]:
         result = match.group(1).strip()
         return result if result else None
     return None
+
 
 def build_folder_mapping(mapping_list: List[str]) -> Dict[str, str]:
     """将简写列表转换为字典映射"""
@@ -25,6 +27,7 @@ def build_folder_mapping(mapping_list: List[str]) -> Dict[str, str]:
             result[keyword] = folder
     return result
 
+
 def find_matching_folder(software_name: str, folder_mapping: Dict[str, str]) -> Optional[str]:
     """根据软件名查找匹配的文件夹"""
     if not software_name or not folder_mapping:
@@ -34,6 +37,7 @@ def find_matching_folder(software_name: str, folder_mapping: Dict[str, str]) -> 
         if keyword.lower() == software_name_lower:
             return folder_name
     return None
+
 
 def format_move_result(results: List[Dict]) -> str:
     """格式化移动结果报告"""
@@ -47,16 +51,19 @@ def format_move_result(results: List[Dict]) -> str:
         return "没有需要归档的文件。"
 
     lines = []
+
     if success:
         lines.append(f"已归档 {len(success)} 个文件：")
         for r in success:
             lines.append(f"  {r['file_name']} → {r['folder']}")
+
     if failed:
         lines.append(f"\n失败 {len(failed)} 个：")
         for r in failed:
             lines.append(f"  {r['file_name']}：{r.get('error', '未知')}")
 
     return "\n".join(lines)
+
 
 def format_mapping_display(folder_mapping: Dict[str, str]) -> str:
     """格式化映射规则显示"""
@@ -66,5 +73,7 @@ def format_mapping_display(folder_mapping: Dict[str, str]) -> str:
     lines = ["映射规则：\n"]
     for keyword, folder_name in folder_mapping.items():
         lines.append(f"  {keyword} → {folder_name}")
+
     lines.append(f"\n共 {len(folder_mapping)} 条")
+
     return "\n".join(lines)
