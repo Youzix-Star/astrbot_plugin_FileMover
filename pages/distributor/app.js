@@ -1,6 +1,5 @@
 const bridge = window.AstrBotPluginPage;
 
-// ==================== 状态管理 ====================
 const state = {
     selectedFile: null,
     groups: [],
@@ -11,7 +10,6 @@ const state = {
     isDistributing: false
 };
 
-// ==================== DOM 引用 ====================
 const $ = id => document.getElementById(id);
 const dropZone = $('dropZone');
 const fileInput = $('fileInput');
@@ -29,10 +27,13 @@ const successCount = $('successCount');
 const failedCount = $('failedCount');
 const resultList = $('resultList');
 
-// ==================== 初始化 ====================
+// ========== 获取插件名 ==========
+let pluginName = '';
+
 async function init() {
     try {
         const context = await bridge.ready();
+        pluginName = context.pluginName;
         console.log('Plugin context:', context);
         
         await loadGroups();
@@ -49,11 +50,20 @@ async function init() {
     }
 }
 
-// ==================== 加载数据 ====================
+// ========== 构造请求 URL ==========
+function getApiUrl(path) {
+    return `/api/v1/plugins/extensions/${pluginName}${path}`;
+}
+
+// ========== 加载数据 ==========
 async function loadGroups() {
     try {
-        const result = await bridge.apiGet('groups');
-        state.groups = result.groups || [];
+        const response = await fetch(getApiUrl('/groups'), {
+            credentials: 'include'
+        });
+        const result = await response.json();
+        console.log('Groups response:', result);
+        state.groups = result.data?.groups || result.groups || [];
         renderGroupSelect();
     } catch (err) {
         console.error('加载群列表失败:', err);
@@ -64,15 +74,18 @@ async function loadGroups() {
 async function loadFolders(groupId) {
     if (!groupId) return;
     try {
-        const result = await bridge.apiGet('folders', { group_id: groupId });
-        state.folders = result.folders || [];
+        const response = await fetch(getApiUrl(`/folders?group_id=${groupId}`), {
+            credentials: 'include'
+        });
+        const result = await response.json();
+        state.folders = result.data?.folders || result.folders || [];
         renderFolderSelect();
     } catch (err) {
         console.error('加载文件夹列表失败:', err);
     }
 }
 
-// ==================== 渲染 ====================
+// ========== 渲染 ==========
 function renderGroupSelect() {
     if (state.groups.length === 0) {
         groupSelect.innerHTML = '<div class="loading">⚠️ 未加入任何群聊</div>';
@@ -94,7 +107,6 @@ function renderGroupSelect() {
     select.addEventListener('change', () => {
         state.selectedGroups = Array.from(select.selectedOptions).map(o => o.value);
         updateDistributeBtn();
-        // 切换群时重新加载文件夹（若单选）
         if (state.selectedGroups.length === 1) {
             loadFolders(parseInt(state.selectedGroups[0]));
         } else {
@@ -121,7 +133,7 @@ function updateDistributeBtn() {
     distributeBtn.disabled = !state.selectedFile || state.selectedGroups.length === 0 || state.isDistributing;
 }
 
-// ==================== 文件上传 ====================
+// ========== 文件上传 ==========
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -160,7 +172,7 @@ removeFileBtn.addEventListener('click', () => {
     updateDistributeBtn();
 });
 
-// ==================== 分发 ====================
+// ========== 分发 ==========
 autoClassify.addEventListener('change', () => {
     state.autoClassify = autoClassify.checked;
 });
@@ -168,12 +180,11 @@ autoClassify.addEventListener('change', () => {
 distributeBtn.addEventListener('click', async () => {
     if (state.isDistributing) return;
     
-    // 准备数据
-    const extraData = {
-        target_groups: state.selectedGroups.join(','),
-        target_folder: state.selectedFolder || '',
-        auto_classify: state.autoClassify ? 'true' : 'false'
-    };
+    const formData = new FormData();
+    formData.append('file', state.selectedFile);
+    formData.append('target_groups', state.selectedGroups.join(','));
+    formData.append('target_folder', state.selectedFolder || '');
+    formData.append('auto_classify', state.autoClassify ? 'true' : 'false');
     
     state.isDistributing = true;
     distributeBtn.disabled = true;
@@ -182,8 +193,13 @@ distributeBtn.addEventListener('click', async () => {
     resultArea.style.display = 'none';
     
     try {
-        const result = await bridge.upload('upload', state.selectedFile, extraData);
-        showResults(result);
+        const response = await fetch(getApiUrl('/upload'), {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+        });
+        const result = await response.json();
+        showResults(result.data || result);
     } catch (err) {
         console.error('分发失败:', err);
         alert(`分发失败: ${err.message}`);
@@ -216,5 +232,4 @@ function showResults(result) {
     });
 }
 
-// ==================== 启动 ====================
 init();

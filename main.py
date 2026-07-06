@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
-from astrbot.api.web import route, GET, POST, PluginUploadFile, json_response, error_response
+from astrbot.api.web import json_response, error_response, request, PluginUploadFile
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .src.utils import (
@@ -19,6 +19,7 @@ from .src.utils import (
 )
 
 PLUGIN_NAME = "astrbot_plugin_FileMover"
+
 
 class FileMoverPlugin(Star):
     def __init__(self, context: Context, config: Optional[Dict] = None):
@@ -40,9 +41,38 @@ class FileMoverPlugin(Star):
         logger.info(f"[群文件归档] 插件已加载，配置了 {len(self.folder_mapping)} 条映射规则")
         logger.info(f"[群文件归档] 上传目录: {self.upload_dir}")
 
-    # ========== Web 路由（使用 @route 装饰器） ==========
+    # ========== 初始化与终止 ==========
+    async def initialize(self):
+        """插件初始化，注册路由并绑定 Bot"""
+        # 注册 Web 路由
+        self.context.register_web_api(
+            "/groups",
+            self.api_get_groups,
+            ["GET"],
+            "获取群列表"
+        )
+        self.context.register_web_api(
+            "/folders",
+            self.api_get_folders,
+            ["GET"],
+            "获取文件夹列表"
+        )
+        self.context.register_web_api(
+            "/upload",
+            self.api_upload_and_distribute,
+            ["POST"],
+            "上传文件并分发"
+        )
+        logger.info("[群文件归档] Web 路由已注册")
 
-    @route("/groups", method=GET)
+        # 绑定 Bot
+        await self._try_bind_bot()
+
+    async def terminate(self):
+        logger.info("[群文件归档] 插件已卸载")
+
+    # ========== Web API 实现 ==========
+
     async def api_get_groups(self, request):
         """获取群列表"""
         await self._try_bind_bot()
@@ -57,7 +87,6 @@ class FileMoverPlugin(Star):
             logger.error(f"获取群列表失败: {e}")
             return error_response(str(e), status_code=500)
 
-    @route("/folders", method=GET)
     async def api_get_folders(self, request):
         """获取根目录文件夹"""
         await self._try_bind_bot()
@@ -81,7 +110,6 @@ class FileMoverPlugin(Star):
             logger.error(f"获取文件夹列表失败: {e}")
             return error_response(str(e), status_code=500)
 
-    @route("/upload", method=POST)
     async def api_upload_and_distribute(self, request):
         """上传并分发"""
         await self._try_bind_bot()
@@ -106,8 +134,6 @@ class FileMoverPlugin(Star):
 
         # 目标文件夹（可选）
         target_folder = form.get("target_folder", "").strip()
-
-        # 是否自动分类
         auto_classify = form.get("auto_classify", "false").lower() == "true"
 
         # 保存临时文件
@@ -117,7 +143,7 @@ class FileMoverPlugin(Star):
         temp_path = self.upload_dir / temp_name
         await upload.save(temp_path)
 
-        # 分发结果
+        # 分发
         results = []
         for group_id in target_groups:
             try:
@@ -125,17 +151,15 @@ class FileMoverPlugin(Star):
                 folder_id = None
 
                 if auto_classify:
-                    # 自动分类：提取软件名并匹配映射
                     software = extract_software_name(original_name)
                     if software:
                         matched_folder = find_matching_folder(software, self.folder_mapping)
                         if matched_folder:
-                            target_folder = matched_folder  # 覆盖
+                            target_folder = matched_folder
 
                 if target_folder:
                     folder_id = await self._get_or_create_folder(gid, target_folder)
 
-                # 上传文件
                 await self._upload_file_to_group(gid, str(temp_path), original_name, folder_id)
                 results.append({"group_id": group_id, "success": True})
             except Exception as e:
@@ -155,7 +179,8 @@ class FileMoverPlugin(Star):
             "failed_count": sum(1 for r in results if not r["success"])
         })
 
-    # ========== 辅助方法 ==========
+    # ========== 辅助方法（文件操作） ==========
+
     async def _get_or_create_folder(self, group_id: int, folder_name: str) -> Optional[str]:
         """获取或创建文件夹，返回 folder_id"""
         folders = await self._get_folders(group_id)
@@ -163,7 +188,6 @@ class FileMoverPlugin(Star):
             if folder.get("folder_name") == folder_name:
                 return folder.get("folder_id")
 
-        # 创建
         try:
             if self._is_llbot:
                 await self.bot.api.call_action("create_group_file_folder", group_id=group_id, name=folder_name)
@@ -192,7 +216,7 @@ class FileMoverPlugin(Star):
             await self.bot.api.call_action("upload_group_file", **params)
 
     async def _get_folders(self, group_id: int) -> List[Dict]:
-        """获取根目录文件夹"""
+        """获取根目录文件夹列表"""
         try:
             if self._is_llbot:
                 result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
@@ -203,49 +227,8 @@ class FileMoverPlugin(Star):
         except Exception:
             return []
 
-    # ========== Bot 绑定 ==========
-    def _is_supported_bot_client(self, client) -> bool:
-        return bool(client and hasattr(client, "api") and hasattr(client.api, "call_action"))
-
-    async def _try_bind_bot(self) -> bool:
-        platform = self.context.get_platform(filter.PlatformAdapterType.AIOCQHTTP)
-        if not platform or not hasattr(platform, "get_client"):
-            return False
-        bot_client = platform.get_client()
-        if not self._is_supported_bot_client(bot_client):
-            return False
-        self.bot = bot_client
-        await self._detect_llbot()
-        return True
-
-    async def _ensure_bot_bound(self, event: AstrMessageEvent):
-        if self._is_supported_bot_client(self.bot):
-            return
-        candidate = getattr(event, "bot", None)
-        if self._is_supported_bot_client(candidate):
-            self.bot = candidate
-            await self._detect_llbot()
-
-    async def _detect_llbot(self):
-        if not self.bot or not hasattr(self.bot, "api"):
-            return
-        try:
-            version_info = await self.bot.api.call_action("get_version_info")
-            app_name = version_info.get("app_name") if isinstance(version_info, dict) else None
-            self._is_llbot = app_name == "LLOneBot"
-        except Exception:
-            self._is_llbot = False
-
-    async def initialize(self):
-        await self._try_bind_bot()
-
-    async def terminate(self):
-        logger.info("[群文件归档] 插件已卸载")
-
-    # ========== 原有指令（完整保留） ==========
-
-    # ---- 获取根目录文件 ----
     async def _get_root_files(self, group_id: int) -> List[Dict]:
+        """获取根目录文件列表"""
         try:
             if self._is_llbot:
                 result = await self.bot.api.call_action("get_group_root_files", group_id=group_id)
@@ -261,8 +244,8 @@ class FileMoverPlugin(Star):
             logger.error(f"[群文件归档] 获取根目录文件失败: {e}")
             return []
 
-    # ---- 递归获取所有文件 ----
     async def _get_all_files(self, group_id: int) -> List[Dict]:
+        """递归获取群内所有文件"""
         all_files = []
         folders_to_scan = [(None, "")]
         while folders_to_scan:
@@ -293,8 +276,8 @@ class FileMoverPlugin(Star):
                 logger.error(f"[群文件归档] 获取文件列表失败: {e}")
         return all_files
 
-    # ---- 移动文件 ----
     async def _move_file(self, group_id: int, file_id: str, current_parent: str, target_folder_id: str) -> bool:
+        """移动文件到目标文件夹"""
         try:
             if self._is_llbot:
                 result = await self.bot.api.call_action("move_group_file", group_id=group_id, file_id=file_id, parent_directory=current_parent, target_directory=target_folder_id)
@@ -312,8 +295,8 @@ class FileMoverPlugin(Star):
             logger.error(f"[群文件归档] 移动文件失败: {e}")
             return False
 
-    # ---- 调试模式 ----
     async def _debug_files(self, group_id: int, scan_all: bool = False) -> str:
+        """调试模式：显示文件详细信息"""
         if scan_all:
             all_files = await self._get_all_files(group_id)
             mode = "所有文件"
@@ -352,10 +335,53 @@ class FileMoverPlugin(Star):
         lines.append(f"  已分类：{skipped} 个")
         return "\n".join(lines)
 
-    # ---- 指令：/fm ----
+    # ========== Bot 绑定 ==========
+
+    def _is_supported_bot_client(self, client) -> bool:
+        return bool(client and hasattr(client, "api") and hasattr(client.api, "call_action"))
+
+    async def _try_bind_bot(self) -> bool:
+        platform = self.context.get_platform(filter.PlatformAdapterType.AIOCQHTTP)
+        if not platform or not hasattr(platform, "get_client"):
+            return False
+        bot_client = platform.get_client()
+        if not self._is_supported_bot_client(bot_client):
+            return False
+        self.bot = bot_client
+        await self._detect_llbot()
+        return True
+
+    async def _ensure_bot_bound(self, event: AstrMessageEvent):
+        if self._is_supported_bot_client(self.bot):
+            return
+        candidate = getattr(event, "bot", None)
+        if self._is_supported_bot_client(candidate):
+            self.bot = candidate
+            await self._detect_llbot()
+
+    async def _detect_llbot(self):
+        if not self.bot or not hasattr(self.bot, "api"):
+            return
+        try:
+            version_info = await self.bot.api.call_action("get_version_info")
+            app_name = version_info.get("app_name") if isinstance(version_info, dict) else None
+            self._is_llbot = app_name == "LLOneBot"
+        except Exception:
+            self._is_llbot = False
+
+    # ========== 指令：自动归档 ==========
+
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.command("fm", alias={"归档", "文件归档", "自动归档"})
     async def on_file_move_command(self, event: AstrMessageEvent):
+        """扫描群文件并根据规则自动归档到对应文件夹
+        
+        用法：
+        /fm - 扫描根目录文件并归档
+        /fm all - 扫描所有文件（包括文件夹内）
+        /fm debug - 调试模式，显示根目录文件详情
+        /fm all debug - 调试模式，显示所有文件详情
+        """
         await self._ensure_bot_bound(event)
         group_id_str = event.get_group_id()
         if not group_id_str:
@@ -371,17 +397,19 @@ class FileMoverPlugin(Star):
             yield event.plain_result("未配置映射规则。")
             return
 
+        # 解析参数
         command_parts = event.message_str.split()
         args = [p.lower() for p in command_parts[1:]] if len(command_parts) > 1 else []
         scan_all = "all" in args
         debug_mode = "debug" in args
 
+        # 调试模式
         if debug_mode:
             debug_result = await self._debug_files(group_id, scan_all)
             yield event.plain_result(debug_result)
             return
 
-        # 正常归档
+        # 正常归档模式
         if scan_all:
             yield event.plain_result("扫描所有文件中...")
             all_files = await self._get_all_files(group_id)
@@ -400,6 +428,7 @@ class FileMoverPlugin(Star):
             file_name = file_info.get("file_name", "")
             file_id = file_info.get("file_id", "")
             current_folder_id = file_info.get("current_folder_id", "/")
+
             if not file_name or not file_id:
                 continue
 
@@ -413,6 +442,7 @@ class FileMoverPlugin(Star):
                 skipped.append(f"{file_name}（无匹配规则）")
                 continue
 
+            # 检查是否已经在目标文件夹中
             current_folder_path = file_info.get("current_folder_path", "")
             if current_folder_path == target_folder_name:
                 skipped.append(f"{file_name}（已在目标文件夹）")
@@ -439,24 +469,30 @@ class FileMoverPlugin(Star):
             await asyncio.sleep(0.5)
 
         report = format_move_result(results)
+        
+        # 如果有跳过的文件，显示原因
         if skipped and not results:
             report += "\n\n跳过的文件：\n" + "\n".join(f"  {s}" for s in skipped[:10])
             if len(skipped) > 10:
                 report += f"\n  ...共 {len(skipped)} 个"
-
+        
         yield event.plain_result(report)
 
-    # ---- 指令：/fmrules ----
+    # ========== 指令：查看规则 ==========
+
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.command("fmrules", alias={"归档规则", "查看规则"})
     async def on_show_rules_command(self, event: AstrMessageEvent):
+        """显示当前配置的映射规则"""
         report = format_mapping_display(self.folder_mapping)
         yield event.plain_result(report)
 
-    # ---- 指令：/fmtest ----
+    # ========== 指令：测试提取 ==========
+
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.command("fmtest", alias={"测试归档"})
     async def on_test_command(self, event: AstrMessageEvent):
+        """测试文件名提取效果"""
         command_parts = event.message_str.split()
         if len(command_parts) < 2:
             yield event.plain_result("用法：/测试归档 <文件名>")
@@ -471,6 +507,7 @@ class FileMoverPlugin(Star):
             f"软件名：{software_name or '无法提取'}",
             f"目标文件夹：{target_folder or '未匹配'}",
         ]
+
         if not software_name:
             lines.append("\n提示：文件名需要包含 _ 或 -")
         elif not target_folder:
